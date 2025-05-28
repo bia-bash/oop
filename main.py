@@ -21,16 +21,23 @@ def save_data(file, data):
     with open(file, "w") as f:
         json.dump(data, f, indent=4)
 
+def format_time_12hr(time_str):
+    """Convert 'HH:MM' 24-hour string to 'hh:mm AM/PM', or return 'N/A' if invalid."""
+    if time_str and re.match(r"^\d{2}:\d{2}$", time_str):
+        try:
+            return datetime.datetime.strptime(time_str, "%H:%M").strftime("%I:%M %p")
+        except ValueError:
+            return "N/A"
+    return "N/A"
+
 # Load data
 patients = load_data(patient_file)
 doctors = load_data(doctor_file)
 
-# Ensure all patients have IDs (for old data)
+# Ensure all patients have IDs
 for idx, p in enumerate(patients):
     if "id" not in p:
-        # fallback: generate ID based on date counting
-        same_day = [x for x in patients if x.get('appointment_date') == p.get('appointment_date')]
-        p["id"] = f"P{len(same_day):03d}"
+        p["id"] = f"P{idx + 1:03d}"
 save_data(patient_file, patients)
 
 # Default doctors
@@ -50,23 +57,16 @@ menu = st.sidebar.selectbox("Menu", [
 if menu == "Add Patient":
     st.subheader("Register New Patient")
 
-    # Appointment date first to generate patient ID
-    appointment_date = st.date_input("Appointment Date", min_value=datetime.date.today())
-    appointment_day = appointment_date.strftime("%A")
-
-    # Generate Patient ID automatically based on count of patients for this date
-    existing_for_date = [p for p in patients if p.get('appointment_date') == str(appointment_date)]
-    new_id_num = len(existing_for_date) + 1
-    patient_id = f"P{new_id_num:03d}"
-    st.markdown(f"**Assigned Patient ID:** {patient_id}")
+    patient_id = st.text_input("Patient ID (e.g., P001)").strip()
 
     name = st.text_input("Patient Name").strip()
     age = st.number_input("Age", min_value=0)
     gender = st.selectbox("Gender", ["Male", "Female", "Other"])
     contact = st.text_input("Contact Number").strip()
+    appointment_date = st.date_input("Appointment Date", min_value=datetime.date.today())
     appointment_time = st.text_input("Appointment Time (e.g., 02:30 PM)").strip()
 
-    doctor_names = [d.get("name", "Unknown Doctor") for d in doctors]
+    doctor_names = [d["name"] for d in doctors]
     assigned_doctor = st.selectbox("Select Doctor", doctor_names)
 
     medical_history = st.text_area("Medical History")
@@ -76,6 +76,7 @@ if menu == "Add Patient":
     doctor_advice = st.text_area("Doctor’s Notes")
     follow_up = st.text_area("Follow-Up (Leave empty if not required)")
 
+    appointment_day = appointment_date.strftime("%A")
     name_valid = re.fullmatch(r"[A-Za-z\s\-']+", name)
     contact_valid = re.fullmatch(r"\+?\d{7,15}", contact)
 
@@ -87,8 +88,10 @@ if menu == "Add Patient":
         time_valid = False
 
     if st.button("Add Patient"):
-        if not name:
-            st.error("Patient Name is required.")
+        if not patient_id:
+            st.error("Patient ID is required.")
+        elif any(p["id"] == patient_id for p in patients):
+            st.error("This Patient ID is already in use.")
         elif not name_valid:
             st.error("Name must only contain letters, spaces, hyphens, or apostrophes.")
         elif not contact_valid:
@@ -97,13 +100,13 @@ if menu == "Add Patient":
             st.error("Appointment time is required.")
         elif not time_valid:
             st.error("Time must be in 12-hour format like 02:30 PM.")
-        elif any(p["appointment_date"] == str(appointment_date) and
-                 p["appointment_time"] == appt_24hr and
-                 p["assigned_doctor"] == assigned_doctor
-                 for p in patients if p.get("is_active", True)):
+        elif any(p.get("appointment_date") == str(appointment_date) and
+                 p.get("appointment_time") == appt_24hr and
+                 p.get("assigned_doctor") == assigned_doctor and
+                 p.get("is_active", True)
+                 for p in patients):
             st.error(f"Doctor is already booked at that time on {appointment_date}.")
         else:
-            # Create new patient entry
             new_patient = {
                 "id": patient_id,
                 "name": name,
@@ -124,7 +127,7 @@ if menu == "Add Patient":
             }
             patients.append(new_patient)
             save_data(patient_file, patients)
-            st.success(f"Patient {name} added with ID {patient_id} and assigned to {assigned_doctor} on {appointment_day}.")
+            st.success(f"Patient added and assigned to {assigned_doctor} on {appointment_day}.")
 
 # --- View Patients ---
 elif menu == "View Patients":
@@ -133,15 +136,15 @@ elif menu == "View Patients":
 
     if active_patients:
         for i, p in enumerate(active_patients, start=1):
-            time_12hr = datetime.datetime.strptime(p['appointment_time'], "%H:%M").strftime("%I:%M %p")
+            time_12hr = format_time_12hr(p.get('appointment_time', ''))
             st.write(
-                f"*{i}. {p['name']} (ID: {p.get('id', 'N/A')})* - Age: {p['age']}, Gender: {p['gender']}, Contact: {p['contact']}  \n"
-                f"Appointment: {p['appointment_date']} at {time_12hr} ({p['appointment_day']}) with {p['assigned_doctor']}"
+                f"*{i}. {p.get('name', 'N/A')} (ID: {p.get('id', 'N/A')})* - Age: {p.get('age', 'N/A')}, Gender: {p.get('gender', 'N/A')}, Contact: {p.get('contact', 'N/A')}  \n"
+                f"Appointment: {p.get('appointment_date', 'N/A')} at {time_12hr} ({p.get('appointment_day', 'N/A')}) with {p.get('assigned_doctor', 'N/A')}"
             )
-            if st.button(f"Remove {p['name']}", key=f"remove_{i}"):
+            if st.button(f"Remove {p.get('name', 'N/A')}", key=f"remove_{i}"):
                 p["is_active"] = False
                 save_data(patient_file, patients)
-                st.success(f"{p['name']} removed.")
+                st.success(f"{p.get('name', 'N/A')} removed.")
                 st.experimental_rerun()
     else:
         st.info("No registered patients.")
@@ -150,33 +153,33 @@ elif menu == "View Patients":
 elif menu == "View Doctors":
     st.subheader("Doctors")
     for d in doctors:
-        st.write(f"{d.get('name', 'Unknown Doctor')}")
+        st.write(d.get('name', 'N/A'))
 
 # --- View All Patients ---
 elif menu == "View All Patients":
     st.subheader("All Patients Data")
     search_name = st.text_input("Search by patient name").strip().lower()
-    filtered_patients = [p for p in patients if search_name in p['name'].lower()]
+    filtered_patients = [p for p in patients if search_name in p.get('name', '').lower()]
 
     if filtered_patients:
         for i, p in enumerate(filtered_patients, start=1):
-            time_12hr = datetime.datetime.strptime(p['appointment_time'], "%H:%M").strftime("%I:%M %p")
+            time_12hr = format_time_12hr(p.get('appointment_time', ''))
             st.markdown(f"""
-*{i}. {p['name']} (ID: {p.get('id', 'N/A')})*
-- Age: {p['age']}
-- Gender: {p['gender']}
-- Contact: {p['contact']}
-- Appointment: {p['appointment_date']} at {time_12hr} ({p['appointment_day']})
-- Doctor: {p['assigned_doctor']}
-- Medical History: {p['medical_history']}
-- Vital Signs: {p['vital_signs']}
-- Physical Examination: {p['physical_examination']}
-- Lab Results: {p['laboratory_tests']}
-- Doctor’s Notes: {p['doctor_advice']}
-- Follow-Up: {p['follow_up']}
+*{i}. {p.get('name', 'N/A')} (ID: {p.get('id', 'N/A')})*
+- Age: {p.get('age', 'N/A')}
+- Gender: {p.get('gender', 'N/A')}
+- Contact: {p.get('contact', 'N/A')}
+- Appointment: {p.get('appointment_date', 'N/A')} at {time_12hr} ({p.get('appointment_day', 'N/A')})
+- Doctor: {p.get('assigned_doctor', 'N/A')}
+- Medical History: {p.get('medical_history', '')}
+- Vital Signs: {p.get('vital_signs', '')}
+- Physical Examination: {p.get('physical_examination', '')}
+- Lab Results: {p.get('laboratory_tests', '')}
+- Doctor’s Notes: {p.get('doctor_advice', '')}
+- Follow-Up: {p.get('follow_up', '')}
 """)
         if st.button("Print All Patients"):
-            st.write("\n".join([f"{i+1}. {p['name']} ({p['appointment_date']}) - {p['assigned_doctor']}" for i, p in enumerate(filtered_patients)]))
+            st.write("\n".join([f"{i+1}. {p.get('name', 'N/A')} ({p.get('appointment_date', 'N/A')}) - {p.get('assigned_doctor', 'N/A')}" for i, p in enumerate(filtered_patients)]))
     else:
         st.info("No matching patients found.")
 
@@ -184,18 +187,18 @@ elif menu == "View All Patients":
 elif menu == "Follow-Up Patients":
     st.subheader("Patients Needing Follow-Up")
     follow_ups = [p for p in patients if p.get('follow_up')]
-    doctor_filter = st.selectbox("Filter by Doctor", ["All"] + sorted(set(p['assigned_doctor'] for p in follow_ups)))
+    doctor_filter = st.selectbox("Filter by Doctor", ["All"] + sorted(set(p.get('assigned_doctor', '') for p in follow_ups)))
 
     if doctor_filter != "All":
-        follow_ups = [p for p in follow_ups if p['assigned_doctor'] == doctor_filter]
+        follow_ups = [p for p in follow_ups if p.get('assigned_doctor') == doctor_filter]
 
     if follow_ups:
         for i, p in enumerate(follow_ups, start=1):
-            st.write(f"*{i}. {p['name']} (ID: {p.get('id', 'N/A')})* - Follow-Up: {p['follow_up']} - Doctor: {p['assigned_doctor']}")
-            if st.button(f"Remove {p['name']} from Follow-Up", key=f"remove_follow_up_{i}"):
+            st.write(f"*{i}. {p.get('name', 'N/A')} (ID: {p.get('id', 'N/A')})* - Follow-Up: {p.get('follow_up')} - Doctor: {p.get('assigned_doctor', 'N/A')}")
+            if st.button(f"Remove {p.get('name', 'N/A')} from Follow-Up", key=f"remove_follow_up_{i}"):
                 p['follow_up'] = ''
                 save_data(patient_file, patients)
-                st.success(f"{p['name']} removed from follow-up.")
+                st.success(f"{p.get('name', 'N/A')} removed from follow-up.")
                 st.experimental_rerun()
     else:
         st.info("No patients marked for follow-up.")
@@ -207,27 +210,35 @@ elif menu == "Patient Schedule":
     if not active_patients:
         st.info("No scheduled patients.")
     else:
-        all_dates = sorted(set(p["appointment_date"] for p in active_patients))
-        all_doctors = sorted(set(p["assigned_doctor"] for p in active_patients))
+        all_dates = sorted(set(p.get("appointment_date", '') for p in active_patients))
+        all_doctors = sorted(set(p.get("assigned_doctor", '') for p in active_patients))
 
         selected_date = st.selectbox("Filter by Date", ["All"] + all_dates)
         selected_doctor = st.selectbox("Filter by Doctor", ["All"] + all_doctors)
 
         filtered = active_patients
         if selected_date != "All":
-            filtered = [p for p in filtered if p["appointment_date"] == selected_date]
+            filtered = [p for p in filtered if p.get("appointment_date") == selected_date]
         if selected_doctor != "All":
-            filtered = [p for p in filtered if p["assigned_doctor"] == selected_doctor]
+            filtered = [p for p in filtered if p.get("assigned_doctor") == selected_doctor]
 
         if filtered:
             from datetime import datetime as dt
-            filtered.sort(key=lambda p: dt.strptime(p["appointment_date"] + " " + p["appointment_time"], "%Y-%m-%d %H:%M"))
+            def sort_key(p):
+                date_str = p.get("appointment_date", "1900-01-01")
+                time_str = p.get("appointment_time", "00:00")
+                try:
+                    return dt.strptime(date_str + " " + time_str, "%Y-%m-%d %H:%M")
+                except ValueError:
+                    return dt.min
+            filtered.sort(key=sort_key)
+
             for i, p in enumerate(filtered, start=1):
-                time_12hr = datetime.datetime.strptime(p['appointment_time'], "%H:%M").strftime("%I:%M %p")
+                time_12hr = format_time_12hr(p.get('appointment_time', ''))
                 st.markdown(f"""
-                **{i}. {p['name']} (ID: {p.get('id', 'N/A')})**
-                - 🗓 Appointment: {p['appointment_date']} at {time_12hr} ({p['appointment_day']})
-                - 👨‍⚕️ Doctor: {p['assigned_doctor']}
+                **{i}. {p.get('name', 'N/A')} (ID: {p.get('id', 'N/A')})**
+                - 🗓 Appointment: {p.get('appointment_date', 'N/A')} at {time_12hr} ({p.get('appointment_day', 'N/A')})
+                - 👨‍⚕️ Doctor: {p.get('assigned_doctor', 'N/A')}
                 """)
         else:
             st.warning("No matching scheduled patients.")

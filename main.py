@@ -25,7 +25,7 @@ def save_data(file, data):
 patients = load_data(patient_file)
 doctors = load_data(doctor_file)
 
-# One-time fix: ensure all patients have IDs
+# Ensure all patients have IDs
 for idx, p in enumerate(patients):
     if "id" not in p:
         p["id"] = f"P{idx + 1:03d}"
@@ -48,8 +48,7 @@ menu = st.sidebar.selectbox("Menu", [
 if menu == "Add Patient":
     st.subheader("Register New Patient")
 
-    patient_id = f"P{len(patients) + 1:03d}"
-    st.text_input("Patient ID", value=patient_id, disabled=True)
+    patient_id = st.text_input("Patient ID (e.g., P001)").strip()
 
     name = st.text_input("Patient Name").strip()
     age = st.number_input("Age", min_value=0)
@@ -58,9 +57,8 @@ if menu == "Add Patient":
     appointment_date = st.date_input("Appointment Date", min_value=datetime.date.today())
     appointment_time = st.text_input("Appointment Time (e.g., 02:30 PM)").strip()
 
-    # Manual doctor selection
-    doctor_names = [doc["name"] for doc in doctors]
-    selected_doctor = st.selectbox("Select Doctor", doctor_names)
+    doctor_names = [d["name"] for d in doctors]
+    assigned_doctor = st.selectbox("Select Doctor", doctor_names)
 
     medical_history = st.text_area("Medical History")
     vital_signs = st.text_area("Vital Signs")
@@ -69,6 +67,7 @@ if menu == "Add Patient":
     doctor_advice = st.text_area("Doctor’s Notes")
     follow_up = st.text_area("Follow-Up (Leave empty if not required)")
 
+    appointment_day = appointment_date.strftime("%A")
     name_valid = re.fullmatch(r"[A-Za-z\s\-']+", name)
     contact_valid = re.fullmatch(r"\+?\d{7,15}", contact)
 
@@ -80,7 +79,11 @@ if menu == "Add Patient":
         time_valid = False
 
     if st.button("Add Patient"):
-        if not name_valid:
+        if not patient_id:
+            st.error("Patient ID is required.")
+        elif any(p["id"] == patient_id for p in patients):
+            st.error("This Patient ID is already in use.")
+        elif not name_valid:
             st.error("Name must only contain letters, spaces, hyphens, or apostrophes.")
         elif not contact_valid:
             st.error("Contact number must be digits or start with +, 7 to 15 characters.")
@@ -88,10 +91,12 @@ if menu == "Add Patient":
             st.error("Appointment time is required.")
         elif not time_valid:
             st.error("Time must be in 12-hour format like 02:30 PM.")
-        elif not selected_doctor:
-            st.error("Doctor selection is required.")
+        elif any(p["appointment_date"] == str(appointment_date) and
+                 p["appointment_time"] == appt_24hr and
+                 p["assigned_doctor"] == assigned_doctor
+                 for p in patients if p.get("is_active", True)):
+            st.error(f"Doctor is already booked at that time on {appointment_date}.")
         else:
-            appointment_day = appointment_date.strftime("%A")
             new_patient = {
                 "id": patient_id,
                 "name": name,
@@ -101,7 +106,7 @@ if menu == "Add Patient":
                 "appointment_date": str(appointment_date),
                 "appointment_time": appt_24hr,
                 "appointment_day": appointment_day,
-                "assigned_doctor": selected_doctor,
+                "assigned_doctor": assigned_doctor,
                 "medical_history": medical_history,
                 "vital_signs": vital_signs,
                 "physical_examination": physical_examination,
@@ -112,7 +117,7 @@ if menu == "Add Patient":
             }
             patients.append(new_patient)
             save_data(patient_file, patients)
-            st.success(f"Patient added and assigned to {selected_doctor} on {appointment_day}.")
+            st.success(f"Patient added and assigned to {assigned_doctor} on {appointment_day}.")
 
 # --- View Patients ---
 elif menu == "View Patients":
@@ -136,9 +141,9 @@ elif menu == "View Patients":
 
 # --- View Doctors ---
 elif menu == "View Doctors":
-    st.subheader("Doctors List")
+    st.subheader("Doctors")
     for d in doctors:
-        st.write(f"- {d['name']}")
+        st.write(f"{d['name']}")
 
 # --- View All Patients ---
 elif menu == "View All Patients":
@@ -191,7 +196,6 @@ elif menu == "Follow-Up Patients":
 # --- Patient Schedule ---
 elif menu == "Patient Schedule":
     st.subheader("Patient Appointment Schedule")
-
     active_patients = [p for p in patients if p.get("is_active", True)]
     if not active_patients:
         st.info("No scheduled patients.")
